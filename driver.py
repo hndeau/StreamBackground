@@ -110,20 +110,31 @@ def cleanup_browsers():
 
 
 # -------- YOUTUBE API HANDLING -----------
-async def fetch_live_videos():
-    if 'live' in VIDEO_CACHE and 'last_updated' in VIDEO_CACHE['live']:
-        last_updated = datetime.datetime.strptime(VIDEO_CACHE['live']['last_updated'], '%Y-%m-%d')
-        # Adjust the caching time, for example, 1 day
-        if (datetime.datetime.now() - last_updated).days < 1:
-            logger.debug(f"Using cached live videos. Last updated on {VIDEO_CACHE['live']['last_updated']}")
-            return VIDEO_CACHE['live']['urls']
+async def fetch_videos(event_type=None, order=None, max_results=None):
+    key = 'live' if event_type == 'live' else 'popular'
+
+    if key in VIDEO_CACHE and 'last_updated' in VIDEO_CACHE[key]:
+        last_updated = datetime.datetime.strptime(VIDEO_CACHE[key]['last_updated'], '%Y-%m-%d')
+        # Adjust the caching time
+        caching_time = 1 if key == 'live' else 60
+        if (datetime.datetime.now() - last_updated).days < caching_time:
+            logger.debug(f"Using cached {key} videos. Last updated on {VIDEO_CACHE[key]['last_updated']}")
+            return VIDEO_CACHE[key]['urls']
+
     params = {
         'part': 'id',
         'channelId': CHANNEL_ID,
-        'eventType': 'live',
         'type': 'video',
         'key': API_KEY
     }
+
+    if event_type:
+        params['eventType'] = event_type
+    if order:
+        params['order'] = order
+    if max_results:
+        params['maxResults'] = max_results
+
     async with aiohttp.ClientSession() as session:
         async with session.get(BASE_URL, params=params) as response:
             data = await response.text()
@@ -135,47 +146,16 @@ async def fetch_live_videos():
         'last_updated': datetime.datetime.now().strftime('%Y-%m-%d'),
         'urls': urls
     }
-    save_to_json(data_to_save, key='live')
+    save_to_json(data_to_save, key=key)
     return urls
+
+
+async def fetch_live_videos():
+    return await fetch_videos(event_type='live')
 
 
 async def fetch_top_100_videos():
-    if 'popular' in VIDEO_CACHE and 'last_updated' in VIDEO_CACHE['live']:
-        last_updated = datetime.datetime.strptime(VIDEO_CACHE['popular']['last_updated'], '%Y-%m-%d')
-        # Adjust the caching time, for example, 1 day
-        if (datetime.datetime.now() - last_updated).days < 1:
-            logger.debug(f"Using cached live videos. Last updated on {VIDEO_CACHE['live']['last_updated']}")
-            return VIDEO_CACHE['popular']['urls']
-    data = load_from_json()
-    if data:
-        last_updated = datetime.datetime.strptime(data['last_updated'], '%Y-%m-%d')
-        if (datetime.datetime.now() - last_updated).days < 60:
-            logger.debug(f"Using cached top 100 videos. Last updated on {data['last_updated']}")
-            random.shuffle(data['urls'])
-            return data['urls']
-
-    params = {
-        'part': 'id',
-        'channelId': CHANNEL_ID,
-        'order': 'viewCount',
-        'maxResults': TOP_N,
-        'type': 'video',
-        'key': API_KEY
-    }
-    urls = []
-    async with aiohttp.ClientSession() as session:
-        async with session.get(BASE_URL, params=params) as response:
-            data = await response.text()
-            json_data = json.loads(data)
-            urls = ["https://www.youtube.com/embed/" + item['id']['videoId'] for item in json_data['items']]
-
-    # Update the cache and save it
-    data_to_save = {
-        'last_updated': datetime.datetime.now().strftime('%Y-%m-%d'),
-        'urls': urls
-    }
-    save_to_json(data_to_save, key='popular')
-    return urls
+    return await fetch_videos(order='viewCount', max_results=TOP_N)
 
 
 # ---------- MAIN EXECUTION FUNCTIONS ------------
