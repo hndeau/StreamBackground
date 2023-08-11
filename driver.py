@@ -1,4 +1,3 @@
-import asyncio
 import datetime
 import json
 import logging
@@ -55,7 +54,6 @@ def debug_selenium(self, message, *args, **kwargs):
 # ---------------------------------
 if sys.platform == 'win32':
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-
 
 logging.Logger.debug_general = debug_general
 logging.Logger.debug_selenium = debug_selenium
@@ -154,23 +152,34 @@ class MonitorManager:
         # Properly handle the next_page_token
         if self.next_page_token != -1:  # Check if there's a next page
             for next_top_video in next_top_videos:
-                self.video_queue.put((1, next_top_video))  # Enqueue top videos with priority 1
-                self.top_videos.append(next_top_video)  # Append next_top_video to the top_videos list
+                if next_top_video not in self.top_videos:  # Check if the video URL is unique
+                    self.video_queue.put((1, next_top_video))  # Enqueue top videos with priority 1
+                    self.top_videos.append(next_top_video)  # Append next_top_video to the top_videos list
         # Update the cache with the appended top_videos
         save_to_json({
             'last_updated': datetime.datetime.now().strftime('%Y-%m-%d'),
-            'urls': self.top_videos
+            'urls': self.top_videos,
+            'last_page_token': self.next_page_token  # Save the next page token instead of the last one
         }, key='viewCount')  # Save to cache with the key 'viewCount' (or appropriate key for top videos)
         return next_top_videos
 
     async def monitor_video_statuses(self, monitor):
         while not self.is_stopped():
             if monitor.is_page_loaded() and not monitor.is_playing_video():
-                if self.video_queue.empty():
-                    await self.fetch_next_videos()  # Fetch and enqueue next set of videos if queue is empty
+                # Check the first item in the priority queue (without removing it)
+                priority, video_url = self.video_queue.queue[0] if not self.video_queue.empty() else (None, None)
 
-                priority, video_url = self.video_queue.get()  # Dequeue next video
-                monitor.play_video(video_url)
+                # If it's a live stream and it's not already playing on this monitor, then play it
+                if priority == 0 and video_url != monitor.current_url:
+                    logger.debug_general(f"Stream detected, switching...")
+                    self.video_queue.get()  # Dequeue the live stream from the priority queue
+                    monitor.play_video(video_url)
+                else:
+                    if self.video_queue.empty():
+                        await self.fetch_next_videos()  # Fetch and enqueue next set of videos if queue is empty
+                    priority, video_url = self.video_queue.get()  # Dequeue next video
+                    if video_url != monitor.current_url:  # Avoid replaying the same video
+                        monitor.play_video(video_url)
             await asyncio.sleep(5)
 
     async def enqueue_next_videos(self):
@@ -187,6 +196,9 @@ class MonitorManager:
 
         for top_video in top_videos:
             self.video_queue.put((1, top_video))  # Enqueue top videos with priority 1
+        # Load viewCount cache and extract the last page token
+        view_count_cache = load_from_json().get('viewCount', {})
+        self.next_page_token = view_count_cache.get('last_page_token', None)
 
     def init_browser_and_return_monitor(self, monitor):
         """This method initializes the browser and returns the monitor instance."""
@@ -225,13 +237,14 @@ class MonitorManager:
 
 # -------- YOUTUBE API HANDLING -----------
 async def fetch_videos(event_type=None, order=None, max_results=None, page_token=None, bypass_cache=False):
-    if not bypass_cache and event_type in VIDEO_CACHE and 'last_updated' in VIDEO_CACHE[event_type]:
-        last_updated = datetime.datetime.strptime(VIDEO_CACHE[event_type]['last_updated'], '%Y-%m-%d')
-        caching_time = 1 if event_type == 'live' else 60
+    cache_key = event_type or order
+    if not bypass_cache and cache_key in VIDEO_CACHE and 'last_updated' in VIDEO_CACHE[cache_key]:
+        last_updated = datetime.datetime.strptime(VIDEO_CACHE[cache_key]['last_updated'], '%Y-%m-%d')
+        caching_time = 1 if cache_key == 'live' else 60
         if (datetime.datetime.now() - last_updated).days < caching_time:
             logger.debug_general(
-                f"Using cached {event_type} videos. Last updated on {VIDEO_CACHE[event_type]['last_updated']}")
-            return VIDEO_CACHE[event_type]['urls'], page_token
+                f"Using cached {cache_key} videos. Last updated on {VIDEO_CACHE[cache_key]['last_updated']}")
+            return VIDEO_CACHE[cache_key]['urls'], page_token
 
     params = {
         'part': 'id',
@@ -266,9 +279,11 @@ async def fetch_videos(event_type=None, order=None, max_results=None, page_token
             urls = ["https://www.youtube.com/embed/" + item['id']['videoId'] for item in json_data['items']]
 
     # Update the cache and save it
+    # Update the cache and save it
     data_to_save = {
         'last_updated': datetime.datetime.now().strftime('%Y-%m-%d'),
-        'urls': urls
+        'urls': urls,
+        'last_page_token': page_token  # Save the last page token
     }
     cache_key = event_type or order
     save_to_json(data_to_save, key=cache_key)
