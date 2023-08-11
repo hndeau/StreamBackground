@@ -28,7 +28,9 @@ def save_to_json(data, key=None, filename=JSON_FILE):
 
 def load_from_json(filename=JSON_FILE):
     """Load data from a JSON file."""
-    if os.path.exists(filename):
+    try:
         with open(filename, 'r') as file:
             return json.load(file)
-    return None
+    except json.JSONDecodeError:
+        # Return an empty dictionary if there's a JSON decode error
+        return {}

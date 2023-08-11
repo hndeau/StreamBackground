@@ -2,13 +2,13 @@ import asyncio
 import datetime
 import json
 import logging
-import random
 import sys
 import threading
 import time
 import aiohttp
 import keyboard
-
+import queue
+import asyncio
 from screeninfo import get_monitors
 from selenium import webdriver
 from selenium.webdriver import Keys
@@ -35,8 +35,40 @@ BASE_URL = config['BASE_URL']
 CHANNEL_ID = config['CHANNEL_ID']
 BROWSER_WINDOW_SIZE = tuple(config['BROWSER_WINDOW_SIZE'])
 
+# Custom log levels
+DEBUG_GENERAL = 25
+DEBUG_SELENIUM = 15
+logging.addLevelName(DEBUG_GENERAL, "DEBUG_GENERAL")
+logging.addLevelName(DEBUG_SELENIUM, "DEBUG_SELENIUM")
+
+
+# --------- DEBUG HELPERS ---------
+
+def debug_general(self, message, *args, **kwargs):
+    self.log(DEBUG_GENERAL, message, *args, **kwargs)
+
+
+def debug_selenium(self, message, *args, **kwargs):
+    self.log(DEBUG_SELENIUM, message, *args, **kwargs)
+
+
+# ---------------------------------
+if sys.platform == 'win32':
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
+
+logging.Logger.debug_general = debug_general
+logging.Logger.debug_selenium = debug_selenium
+
+# Set up log level based on command-line arguments
+if "--debug" in sys.argv:
+    logging_level = DEBUG_GENERAL
+elif "--debug-full" in sys.argv:
+    logging_level = DEBUG_SELENIUM
+else:
+    logging_level = logging.WARNING
+
 logger = logging.getLogger(__name__)
-logging_level = logging.DEBUG if DEBUG_MODE else logging.WARNING
 logging.basicConfig(level=logging_level)
 
 VIDEO_CACHE = load_from_json() or {}
@@ -50,10 +82,13 @@ class Monitor:
         self.current_url = url
 
     def is_playing_video(self):
-        return self._video_has_ended()
+        if self.is_page_loaded():
+            return self._video_has_ended()
+        return False
 
     def play_video(self, url):
         try:
+            logger.debug_general(f'Video Started: {url}')  # Debug statement for video play
             self.browser.get(url)
             self.current_url = url
             player = WebDriverWait(self.browser, 15).until(
@@ -77,23 +112,26 @@ class Monitor:
 
     def _video_has_ended(self):
         try:
-            WebDriverWait(self.browser, 15).until(
-                EC.presence_of_element_located((By.ID, "movie_player"))
+            player = WebDriverWait(self.browser, 15).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "video.video-stream"))
             )
-            script = "return document.getElementById('movie_player').getCurrentTime()"
-            initial_time = self.browser.execute_script(script)
-            time.sleep(2)
-            final_time = self.browser.execute_script(script)
-            return not initial_time == final_time
+            script = "return arguments[0].paused"
+            is_paused = self.browser.execute_script(script, player)
+            return not is_paused
         except Exception as e:
             logger.error(f"Error checking video status: {e}")
             return False
 
 
 class MonitorManager:
-    def __init__(self):
+    def __init__(self, live_videos, top_videos):
         self.monitors = []
         self.STOP_THREADS = False
+        self.video_queue = queue.PriorityQueue()
+        self.live_videos = live_videos
+        self.top_videos = top_videos
+        self.next_page_token = None  # Initialize next_page_token
+        self.enqueue_videos(self.live_videos, self.top_videos)
 
     def is_stopped(self):
         return self.STOP_THREADS
@@ -109,27 +147,51 @@ class MonitorManager:
         for monitor in self.monitors:
             monitor.close()
 
-    async def fetch_all_videos(self):
-        return await asyncio.gather(fetch_live_videos(), fetch_top_100_videos())
+    async def fetch_next_videos(self):
+        # Fetch the next set of top videos, bypassing the cache
+        next_top_videos, self.next_page_token = await fetch_videos(order='viewCount', max_results=TOP_N,
+                                                                   page_token=self.next_page_token, bypass_cache=True)
+        # Properly handle the next_page_token
+        if self.next_page_token != -1:  # Check if there's a next page
+            for next_top_video in next_top_videos:
+                self.video_queue.put((1, next_top_video))  # Enqueue top videos with priority 1
+                self.top_videos.append(next_top_video)  # Append next_top_video to the top_videos list
+        # Update the cache with the appended top_videos
+        save_to_json({
+            'last_updated': datetime.datetime.now().strftime('%Y-%m-%d'),
+            'urls': self.top_videos
+        }, key='viewCount')  # Save to cache with the key 'viewCount' (or appropriate key for top videos)
+        return next_top_videos
 
     async def monitor_video_statuses(self, monitor):
         while not self.is_stopped():
-            live_videos, top_videos = await self.fetch_all_videos()
             if monitor.is_page_loaded() and not monitor.is_playing_video():
-                for live_video in live_videos:
-                    if live_video not in [m.current_url for m in self.monitors]:
-                        monitor.play_video(live_video)
-                        break
-                else:
-                    selected_video = random.choice(top_videos)
-                    while selected_video in [m.current_url for m in self.monitors]:
-                        selected_video = random.choice(top_videos)
-                    monitor.play_video(selected_video)
+                if self.video_queue.empty():
+                    await self.fetch_next_videos()  # Fetch and enqueue next set of videos if queue is empty
+
+                priority, video_url = self.video_queue.get()  # Dequeue next video
+                monitor.play_video(video_url)
             await asyncio.sleep(5)
+
+    async def enqueue_next_videos(self):
+        next_top_videos = await self.fetch_next_videos()
+        for next_top_video in next_top_videos:
+            self.video_queue.put((1, next_top_video))  # Enqueue top videos with priority 1
+
+    async def fetch_all_videos(self):
+        return self.live_videos, self.top_videos
+
+    def enqueue_videos(self, live_videos, top_videos):
+        for live_video in live_videos:
+            self.video_queue.put((0, live_video))  # Enqueue live videos with priority 0
+
+        for top_video in top_videos:
+            self.video_queue.put((1, top_video))  # Enqueue top videos with priority 1
 
     def init_browser_and_return_monitor(self, monitor):
         """This method initializes the browser and returns the monitor instance."""
         browser = webdriver.Firefox()
+        logger.debug_selenium('Browser window opened')
         screen_width, screen_height = monitor.width, monitor.height
         window_width, window_height = BROWSER_WINDOW_SIZE
         position_x = (screen_width - window_width) // 2 + monitor.x
@@ -140,6 +202,7 @@ class MonitorManager:
 
         monitor_instance = Monitor(browser)
         self.monitors.append(monitor_instance)
+        logger.debug_general(f'Browser initialized on monitor with position: x={position_x}, y={position_y}')
         return monitor_instance
 
     async def monitor_all_screens(self):
@@ -161,16 +224,14 @@ class MonitorManager:
 
 
 # -------- YOUTUBE API HANDLING -----------
-async def fetch_videos(event_type=None, order=None, max_results=None):
-    key = 'live' if event_type == 'live' else 'popular'
-
-    if key in VIDEO_CACHE and 'last_updated' in VIDEO_CACHE[key]:
-        last_updated = datetime.datetime.strptime(VIDEO_CACHE[key]['last_updated'], '%Y-%m-%d')
-        # Adjust the caching time
-        caching_time = 1 if key == 'live' else 60
+async def fetch_videos(event_type=None, order=None, max_results=None, page_token=None, bypass_cache=False):
+    if not bypass_cache and event_type in VIDEO_CACHE and 'last_updated' in VIDEO_CACHE[event_type]:
+        last_updated = datetime.datetime.strptime(VIDEO_CACHE[event_type]['last_updated'], '%Y-%m-%d')
+        caching_time = 1 if event_type == 'live' else 60
         if (datetime.datetime.now() - last_updated).days < caching_time:
-            logger.debug(f"Using cached {key} videos. Last updated on {VIDEO_CACHE[key]['last_updated']}")
-            return VIDEO_CACHE[key]['urls']
+            logger.debug_general(
+                f"Using cached {event_type} videos. Last updated on {VIDEO_CACHE[event_type]['last_updated']}")
+            return VIDEO_CACHE[event_type]['urls'], page_token
 
     params = {
         'part': 'id',
@@ -179,17 +240,29 @@ async def fetch_videos(event_type=None, order=None, max_results=None):
         'key': API_KEY
     }
 
-    if event_type:
-        params['eventType'] = event_type
-    if order:
-        params['order'] = order
+    if event_type == 'live':
+        params['eventType'] = 'live'
+        params['order'] = order if order else 'viewCount'  # Default to viewCount if order is not specified
+    else:
+        if order:
+            params['order'] = order
+
     if max_results:
         params['maxResults'] = max_results
+
+    if page_token:
+        params['pageToken'] = page_token
+
+    if event_type:
+        logger.debug_general(f"Making API call to fetch {event_type} videos.")
+    else:
+        logger.debug_general(f"Making API call to fetch videos with order: {order}.")
 
     async with aiohttp.ClientSession() as session:
         async with session.get(BASE_URL, params=params) as response:
             data = await response.text()
             json_data = json.loads(data)
+            next_page_token = json_data.get('nextPageToken', -1)
             urls = ["https://www.youtube.com/embed/" + item['id']['videoId'] for item in json_data['items']]
 
     # Update the cache and save it
@@ -197,8 +270,9 @@ async def fetch_videos(event_type=None, order=None, max_results=None):
         'last_updated': datetime.datetime.now().strftime('%Y-%m-%d'),
         'urls': urls
     }
-    save_to_json(data_to_save, key=key)
-    return urls
+    cache_key = event_type or order
+    save_to_json(data_to_save, key=cache_key)
+    return urls, next_page_token
 
 
 async def fetch_live_videos():
@@ -211,9 +285,14 @@ async def fetch_top_100_videos():
 
 # ---------- MAIN EXECUTION FUNCTIONS ------------
 
+async def fetch_videos_and_initialize_manager():
+    live_videos, _ = await fetch_live_videos()  # This line expects two values
+    top_videos, _ = await fetch_top_100_videos()  # This line expects two values
+    return MonitorManager(live_videos, top_videos)
+
 
 if __name__ == "__main__":
-    manager = MonitorManager()
+    manager = asyncio.run(fetch_videos_and_initialize_manager())
 
     # Start the key listener thread first
     key_thread = threading.Thread(target=manager.key_listener)
