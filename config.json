@@ -8,5 +8,6 @@
   ],
   "API_KEY": "",
   "JSON_FILE": "video_cache.json",
-  "TOP_N": 2
+  "TOP_N": 2,
+  "LIVE_VIDEOS_LIMIT": 5
 }

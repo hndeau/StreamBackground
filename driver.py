@@ -69,6 +69,7 @@ else:
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging_level)
 
+LIVE_VIDEOS_LIMIT = config.get('LIVE_VIDEOS_LIMIT', 10)  # default to 10 if not specified in config
 VIDEO_CACHE = load_from_json() or {}
 TOP_N = config.get('TOP_N', 100)  # default to 100 if not specified in config
 
@@ -291,7 +292,7 @@ async def fetch_videos(event_type=None, order=None, max_results=None, page_token
 
 
 async def fetch_live_videos():
-    return await fetch_videos(event_type='live')
+    return await fetch_videos(event_type='live', max_results=LIVE_VIDEOS_LIMIT)
 
 
 async def fetch_top_100_videos():
