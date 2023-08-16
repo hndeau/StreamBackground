@@ -21,8 +21,8 @@ if not os.path.exists(CONFIG_FILE):
     logging.warning(f"{CONFIG_FILE} not found. A new file has been created with default values.")
 
 # Load the config file
-with open(CONFIG_FILE, "r") as f:
-    config = json.load(f)
+with open(CONFIG_FILE, "r") as file:
+    config = json.load(file)
 
 JSON_FILE = config['JSON_FILE']
 logger = logging.getLogger(__name__)
@@ -44,16 +44,30 @@ def save_to_json(data, key=None, filename=JSON_FILE):
     else:
         existing_data = data
 
-    with open(filename, 'w') as file:
-        json.dump(existing_data, file)
+    with open(filename, 'w') as f:
+        json.dump(existing_data, f)
     logger.debug(f"Saved data to {filename}")
+
+
+def append_or_save_to_json(data, key, filename=JSON_FILE, append=False):
+    """Append or save data to a JSON file under a specific key."""
+    existing_data = load_from_json(filename) or {}
+
+    if append and key in existing_data:
+        existing_data[key].extend(data)
+    else:
+        existing_data[key] = data
+
+    with open(filename, 'w') as f:
+        json.dump(existing_data, f)
+    logger.debug(f"Appended data to {filename}" if append else f"Saved data to {filename}")
 
 
 def load_from_json(filename=JSON_FILE):
     """Load data from a JSON file."""
     try:
-        with open(filename, 'r') as file:
-            return json.load(file)
+        with open(filename, 'r') as f:
+            return json.load(f)
     except json.JSONDecodeError:
         # Return an empty dictionary if there's a JSON decode error
         return {}

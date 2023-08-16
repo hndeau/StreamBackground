@@ -1,13 +1,13 @@
 {
   "BASE_URL": "https://www.googleapis.com/youtube/v3/search",
   "CHANNEL_ID": "UCe_3CoEeinvPMze2u_aENBg",
-  "CHANNEL": "",
+  "CHANNEL": "oceanexplorergov",
   "BROWSER_WINDOW_SIZE": [
     500,
     500
   ],
   "API_KEY": "",
   "JSON_FILE": "video_cache.json",
-  "TOP_N": 2,
+  "POPULAR_VIDEOS_LIMIT": 10,
   "LIVE_VIDEOS_LIMIT": 5
 }
