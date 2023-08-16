@@ -1,3 +1,4 @@
+import sys
 import threading
 import asyncio
 
@@ -13,6 +14,9 @@ async def fetch_videos_and_initialize_manager():
 
 
 if __name__ == "__main__":
+    if sys.platform == 'win32':
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
     loop = asyncio.get_event_loop()
     manager = loop.run_until_complete(fetch_videos_and_initialize_manager())
 

@@ -5,7 +5,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as ec
 
 
-def monitor_youtube_streams(channel_name, time_interval=10, wait_time=15, file_path='video_cache.json'):
+def monitor_youtube_streams(channel_name, wait_time=15):
     # Define the URL using the channel name
     url = f'https://www.youtube.com/@{channel_name}/streams'
 
