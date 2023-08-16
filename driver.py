@@ -1,12 +1,8 @@
-
 import threading
 import asyncio
 
-
 from browser_monitor import MonitorManager, fetch_top_100_videos, fetch_live_videos
 
-
-# ---------- MAIN EXECUTION FUNCTIONS ------------
 
 async def fetch_videos_and_initialize_manager():
     live_videos, top_videos = await asyncio.gather(

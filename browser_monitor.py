@@ -143,6 +143,7 @@ async def fetch_top_100_videos():
     urls, _ = await fetch_videos(order='viewCount', max_results=POPULAR_VIDEOS_LIMIT)
     return urls
 
+
 class Monitor:
     def __init__(self, browser, url=None):
         self.browser = browser
