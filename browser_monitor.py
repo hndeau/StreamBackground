@@ -76,7 +76,7 @@ POPULAR_VIDEOS_LIMIT = config.get('POPULAR_VIDEOS_LIMIT', 100)
 # -------- YOUTUBE API HANDLING -----------
 async def fetch_videos(event_type=None, order=None, max_results=None, page_token=None, bypass_cache=False):
     cache_key = event_type or order
-
+    # Check cache
     if not bypass_cache and cache_key in VIDEO_CACHE and 'last_updated' in VIDEO_CACHE[cache_key]:
         last_updated = datetime.datetime.strptime(VIDEO_CACHE[cache_key]['last_updated'], '%Y-%m-%d')
         caching_time = 1 if cache_key == 'live' else 60
@@ -86,6 +86,7 @@ async def fetch_videos(event_type=None, order=None, max_results=None, page_token
                 f"Last updated on {VIDEO_CACHE[cache_key]['last_updated']}")
             return VIDEO_CACHE[cache_key]['urls'], page_token
 
+    # Cache is invalid/inaccurate/bypassed
     params = {
         'part': 'id',
         'channelId': CHANNEL_ID,
@@ -93,19 +94,16 @@ async def fetch_videos(event_type=None, order=None, max_results=None, page_token
         'key': API_KEY
     }
 
+    # Header stuff. Logic works, so I don't bother messing with it
     if event_type == 'live':
         params['eventType'] = 'live'
         params['order'] = order if order else 'viewCount'  # Default to viewCount if order is not specified
-    else:
-        if order:
-            params['order'] = order
-
+    elif order:
+        params['order'] = order
     if max_results:
         params['maxResults'] = max_results
-
     if page_token:
         params['pageToken'] = page_token
-
     if cache_key == "viewCount":
         logger.debug_general(f"Making API call to fetch popular videos.")
     else:
@@ -135,11 +133,13 @@ async def fetch_videos(event_type=None, order=None, max_results=None, page_token
 
 
 async def fetch_live_videos():
+    # returns both the urls and the token in the chance we need it later
     urls, _ = await fetch_videos(event_type='live', max_results=LIVE_VIDEOS_LIMIT)
     return urls
 
 
 async def fetch_top_100_videos():
+    # returns both the urls and the token in the chance we need it later
     urls, _ = await fetch_videos(order='viewCount', max_results=POPULAR_VIDEOS_LIMIT)
     return urls
 
@@ -156,7 +156,7 @@ class Monitor:
             logger.debug_general(f'Video Started: {url}')
             self.browser.get(url)
             self.current_url = url
-            player = WebDriverWait(self.browser, 4).until(
+            player = WebDriverWait(self.browser, 4).until(  # can probably be lower
                 ec.element_to_be_clickable((By.CSS_SELECTOR, "video.video-stream"))
             )
             player.send_keys('F', Keys.SPACE)
@@ -178,7 +178,7 @@ class Monitor:
             return False
         try:
             # Wait for the video player element to be present on the page
-            WebDriverWait(self.browser, 4).until(
+            WebDriverWait(self.browser, 4).until(  # can probably be lower
                 ec.presence_of_element_located((By.CSS_SELECTOR, "video.video-stream"))
             )
             player = self.browser.find_element(By.CSS_SELECTOR, "video.video-stream")
@@ -196,7 +196,7 @@ class MonitorManager:
         self.video_queue = queue.PriorityQueue()
         self.live_videos = live_videos
         self.top_videos = top_videos
-        self.active_videos = set()  # Add this line to create a set of active videos
+        self.active_videos = set()  # Create a set of active videos
         self.enqueue_videos(live_videos, top_videos)
         view_count_cache = load_from_json().get('viewCount', {})
         self.next_popular_page_token = view_count_cache.get('last_page_token', None)
@@ -210,7 +210,7 @@ class MonitorManager:
         self.STOP_THREADS = True
         time.sleep(2)  # Pause for a brief moment to allow any ongoing operations to complete
         self.cleanup_browsers()
-        self.active_videos.clear()  # Add this line to clear active_videos
+        self.active_videos.clear()  # Clear active_videos
 
     def cleanup_browsers(self):
         """Close all browser windows."""
@@ -222,7 +222,7 @@ class MonitorManager:
             if monitor.is_page_loaded() and not monitor.is_playing_video():
                 priority, video_url = self.video_queue.get() if not self.video_queue.empty() else (None, None)
                 if priority is not None and video_url != monitor.current_url:
-                    self.active_videos.add(video_url)  # Add this line to add the video to active_videos
+                    self.active_videos.add(video_url)  # Add the video to active_videos
                     monitor.play_video(video_url)
                     if monitor.current_url:  # Remove the previously playing video from active_videos
                         self.active_videos.discard(monitor.current_url)
@@ -230,10 +230,10 @@ class MonitorManager:
 
     def enqueue_videos(self, live_videos, top_videos):
         for live_video in live_videos:
-            if live_video not in self.active_videos:  # Add this condition
+            if live_video not in self.active_videos:
                 self.video_queue.put((0, live_video))
         for top_video in top_videos:
-            if top_video not in self.active_videos:  # Add this condition
+            if top_video not in self.active_videos:
                 self.video_queue.put((1, top_video))
         # Load viewCount cache and extract the last page token
         view_count_cache = load_from_json().get('viewCount', {})
