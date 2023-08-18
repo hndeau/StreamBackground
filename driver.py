@@ -2,7 +2,7 @@ import sys
 import threading
 import asyncio
 
-from browser_monitor import MonitorManager, fetch_top_100_videos, fetch_live_videos
+from browser_handler import MonitorManager, fetch_top_100_videos, fetch_live_videos
 
 
 async def fetch_videos_and_initialize_manager():
