@@ -224,14 +224,13 @@ class MonitorManager:
         browser = create_driver(self.driver_name)
 
         logger.debug_selenium('Browser window opened')
+        screen_width, screen_height = monitor.width, monitor.height
         window_width, window_height = BROWSER_WINDOW_SIZE
-        position_x = (monitor.width - window_width) // 2 + monitor.x
-        position_y = (monitor.height - window_height) // 2 + monitor.y
+        position_x = (screen_width - window_width) // 2 + monitor.x
+        position_y = (screen_height - window_height) // 2 + monitor.y
 
-        # Use the monitor's width and height for the browser window size
-        browser.set_window_size(monitor.width, monitor.height)
+        browser.set_window_size(*BROWSER_WINDOW_SIZE)
         browser.set_window_position(position_x, position_y)
-        browser.maximize_window()
 
         monitor_instance = Monitor(browser)
         self.monitors.append(monitor_instance)

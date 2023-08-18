@@ -1,5 +1,4 @@
 import datetime
-
 import logging
 
 from utility_helpers import save_to_json
