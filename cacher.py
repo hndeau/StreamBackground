@@ -1,6 +1,6 @@
 import datetime
 
-from setuptools import logging
+import logging
 
 from utility_helpers import save_to_json
 

@@ -12,7 +12,30 @@ from screeninfo import get_monitors
 from selenium import webdriver
 from selenium.webdriver import Keys
 from selenium.webdriver.common.by import By
-from selenium.webdriver.firefox.options import Options
+import asyncio
+import threading
+
+import keyboard
+import time
+import queue
+import json
+import logging
+import sys
+import aiohttp
+from screeninfo import get_monitors
+from selenium import webdriver
+from selenium.webdriver import Keys
+from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.options import Options as ChromeOptions
+from selenium.webdriver.edge.options import Options as EdgeOptions
+from selenium.webdriver.firefox.options import Options as FirefoxOptions
+from selenium.webdriver.support import expected_conditions as ec
+from selenium.webdriver.support.ui import WebDriverWait
+from concurrent.futures import ThreadPoolExecutor
+
+from yt_scrape import monitor_youtube_streams
+from utility_helpers import load_from_json
+from cacher import CacheManager
 from selenium.webdriver.support import expected_conditions as ec
 from selenium.webdriver.support.ui import WebDriverWait
 from concurrent.futures import ThreadPoolExecutor
@@ -119,6 +142,48 @@ class Monitor:
             return False
 
 
+def create_driver(driver_name):
+    if driver_name == 'chrome':  # doesnt work
+        options = ChromeOptions()
+        options.add_argument('--kiosk')
+        options.add_experimental_option("useAutomationExtension", False)
+        options.add_experimental_option(
+            'excludeSwitches',
+            ['disable-sync',
+             'disable-signin-promo',
+             'disable-infobars'])
+        browser = webdriver.Chrome(options=options)
+
+    elif driver_name == 'firefox':
+        options = FirefoxOptions()
+        # Disable images
+        options.set_preference('permissions.default.image', 2)
+        # Disable CSS
+        options.set_preference('permissions.default.stylesheet', 2)
+        # Suppress pop-ups
+        options.set_preference('dom.disable_open_during_load', True)
+        options.set_preference("identity.fxaccounts.enabled", False)
+        options.add_argument('--kiosk')
+        browser = webdriver.Firefox(options=options)
+
+    elif driver_name == 'edge':
+        options = EdgeOptions()
+        options.use_chromium = True
+        options.add_argument('--kiosk')
+        options.add_experimental_option("useAutomationExtension", False)
+        options.add_experimental_option(
+            'excludeSwitches',
+            ['disable-sync',
+             'disable-signin-promo',
+             'enable-automation',
+             'disable-infobars'])
+        browser = webdriver.Edge(options=options)
+
+    else:
+        raise ValueError(f"Unsupported driver: {driver_name}")
+    return browser
+
+
 class MonitorManager:
     def __init__(self, live_videos, top_videos):
         self.prev_count = len(load_from_json().get('live', {}).get('urls', []))
@@ -169,14 +234,9 @@ class MonitorManager:
 
     def init_browser_and_return_monitor(self, monitor):
         """This method initializes the browser and returns the monitor instance."""
-        options = Options()
+        driver_name = config.get('WEB_DRIVER', 'firefox').lower()
+        browser = create_driver(driver_name)
 
-        # Disable images
-        options.set_preference('permissions.default.image', 2)
-        # Disable CSS
-        options.set_preference('permissions.default.stylesheet', 2)
-
-        browser = webdriver.Firefox(options=options)
         logger.debug_selenium('Browser window opened')
         screen_width, screen_height = monitor.width, monitor.height
         window_width, window_height = BROWSER_WINDOW_SIZE

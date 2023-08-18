@@ -9,7 +9,9 @@ DEFAULT_CONFIG = {
     "CHANNEL_ID": "",
     "BROWSER_WINDOW_SIZE": [1024, 768],
     "JSON_FILE": "video_cache.json",
-    "TOP_N": 100
+    "POPULAR_VIDEOS_LIMIT": 10,
+    "LIVE_VIDEOS_LIMIT": 5,
+    "WEB_DRIVER": "chrome"
 }
 
 CONFIG_FILE = "config.json"
