@@ -200,6 +200,7 @@ class MonitorManager:
         live_video_cache = load_from_json().get('live', {})
         self.next_popular_page_token = view_count_cache.get('last_page_token', None)
         self.live_next_page_token = live_video_cache.get('last_page_token', None)
+        self.driver_name = config.get('WEB_DRIVER', 'firefox').lower()
 
     def is_stopped(self):
         return self.STOP_THREADS
@@ -234,8 +235,7 @@ class MonitorManager:
 
     def init_browser_and_return_monitor(self, monitor):
         """This method initializes the browser and returns the monitor instance."""
-        driver_name = config.get('WEB_DRIVER', 'firefox').lower()
-        browser = create_driver(driver_name)
+        browser = create_driver(self.driver_name)
 
         logger.debug_selenium('Browser window opened')
         screen_width, screen_height = monitor.width, monitor.height
@@ -264,7 +264,7 @@ class MonitorManager:
 
     async def fetch_and_enqueue_next_videos(self):
         while not self.is_stopped():
-            result = await asyncio.get_running_loop().run_in_executor(None, monitor_youtube_streams, CHANNEL)
+            result = await asyncio.get_running_loop().run_in_executor(None, monitor_youtube_streams, CHANNEL, self.driver_name)
             if result > self.prev_count:
                 await self.fetch_next_live_videos()  # Fetch next set of live videos
                 self.enqueue_videos(self.live_videos, self.top_videos)  # Re-enqueue videos with updated live streams
