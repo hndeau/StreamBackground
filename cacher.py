@@ -35,14 +35,15 @@ class CacheManager:
     def update_and_save_cache(self, urls, page_token, cache_key):
         self.logger.debug_general(f"Updating and saving cache for key: {cache_key}")
         if cache_key == "viewCount":
-            existing_urls = self.load_from_cache('viewCount').get('urls', [])
+            existing_cache = self.load_from_cache('viewCount')
+            existing_urls = existing_cache.get('urls', []) if existing_cache else []
             urls = list(set(existing_urls + urls))
 
         data_to_save = {
             'last_updated': datetime.datetime.now().strftime('%Y-%m-%d'),
             'urls': urls,
             'last_page_token': page_token  # Save the last page token
-
         }
 
         self.save_to_cache(data_to_save, key=cache_key)
+

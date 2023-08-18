@@ -1,6 +1,7 @@
 import asyncio
+import random
 import threading
-
+import os
 import keyboard
 import time
 import queue
@@ -62,9 +63,9 @@ logger = setup_logging()
 if sys.platform == 'win32':
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-API_KEY = config['API_KEY']
+API_KEY = os.environ.get('API_KEY')
 if not API_KEY:
-    logging.error("API key not provided in config.")
+    logging.error("API key not provided in config or environment variable.")
     sys.exit(1)
 
 BASE_URL = config['BASE_URL']
@@ -74,6 +75,8 @@ BROWSER_WINDOW_SIZE = tuple(config['BROWSER_WINDOW_SIZE'])
 LIVE_VIDEOS_LIMIT = config.get('LIVE_VIDEOS_LIMIT', 10)
 VIDEO_CACHE = load_from_json() or {}
 POPULAR_VIDEOS_LIMIT = config.get('POPULAR_VIDEOS_LIMIT', 100)
+cache_manager = CacheManager(load_from_json())
+random.seed(int(time.time()))
 
 
 # -------- MONITOR AND BROWSER HANDLING -----------
@@ -167,22 +170,35 @@ class Monitor:
 
 
 class MonitorManager:
-    def __init__(self, live_videos, top_videos):
-        self.prev_count = len(load_from_json().get('live', {}).get('urls', []))
+    def __init__(self, live_videos=None, top_videos=None):
+        # Loading the tokens from the cache
+        view_count_cache = cache_manager.load_from_cache('viewCount')
+        live_video_cache = cache_manager.load_from_cache('live')
+
+        self.next_popular_page_token = view_count_cache.get('last_page_token', None) if view_count_cache else None
+        self.live_next_page_token = live_video_cache.get('last_page_token', None) if live_video_cache else None
+        self.prev_count = len(live_video_cache.get('urls', []) if live_video_cache else [])
+        self.driver_name = config.get('WEB_DRIVER', 'firefox').lower()
         self.monitors = []
         self.STOP_THREADS = False
         self.video_queue = queue.PriorityQueue()
-        self.live_videos = live_videos
-        self.top_videos = top_videos
         self.active_videos = set()  # Create a set of active videos
-        self.enqueue_videos(live_videos, top_videos)
 
-        # Loading the tokens from the cache
-        view_count_cache = load_from_json().get('viewCount', {})
-        live_video_cache = load_from_json().get('live', {})
-        self.next_popular_page_token = view_count_cache.get('last_page_token', None)
-        self.live_next_page_token = live_video_cache.get('last_page_token', None)
-        self.driver_name = config.get('WEB_DRIVER', 'firefox').lower()
+        # If live_videos is not provided, fetch it from the cache or API
+        if live_videos is None:
+            if cache_manager.is_cache_valid('live'):
+                self.live_videos = live_video_cache.get('urls', [])
+            else:
+                self.live_videos = asyncio.run(fetch_live_videos())
+
+        # If top_videos is not provided, fetch it from the cache or API
+        if top_videos is None:
+            if cache_manager.is_cache_valid('viewCount'):
+                self.top_videos = view_count_cache.get('urls', [])
+            else:
+                self.top_videos = asyncio.run(fetch_top_100_videos())
+
+        self.enqueue_videos(live_videos, top_videos)
 
     def is_stopped(self):
         return self.STOP_THREADS
@@ -214,10 +230,10 @@ class MonitorManager:
 
     def enqueue_videos(self, live_videos, top_videos):
         logger.debug_general(f"Enqueuing {len(live_videos)} live videos and {len(top_videos)} top videos.")
+        random.shuffle(top_videos)
         for video, priority in zip(live_videos + top_videos, [0] * len(live_videos) + [1] * len(top_videos)):
             if video not in self.active_videos:
                 self.video_queue.put((priority, video))
-        logger.debug_general(f"Videos enqueued. Total active videos: {len(self.active_videos)}")
 
     def init_browser_and_return_monitor(self, monitor):
         """This method initializes the browser and returns the monitor instance."""
@@ -238,32 +254,37 @@ class MonitorManager:
         return monitor_instance
 
     async def fetch_next_live_videos(self):
-        next_live_videos, _ = \
-            await fetch_videos(event_type='live',
-                               max_results=LIVE_VIDEOS_LIMIT,
-                               page_token=None,
-                               bypass_cache=True)
-        for next_live_video in next_live_videos:
+        # Check if the live video cache is valid
+        if cache_manager.is_cache_valid('live'):
+            self.live_videos = cache_manager.load_from_cache('live').get('urls', [])
+        else:
+            # Fetch from the API if cache is not valid
+            self.live_videos, _ = await fetch_videos(event_type='live', max_results=LIVE_VIDEOS_LIMIT, page_token=None)
+
+        for next_live_video in self.live_videos:
             self.video_queue.put((0, next_live_video))
-        self.live_videos = next_live_videos
+
         # Update this line to get the 'live' video count from the cache
         self.prev_count = len(cache_manager.load_from_cache('live').get('urls', []))
 
     async def fetch_and_enqueue_next_videos(self):
         while not self.is_stopped():
+            # Check for new live videos
             result = await asyncio.get_running_loop().run_in_executor(None, monitor_youtube_streams, CHANNEL,
                                                                       self.driver_name)
             if result > self.prev_count:
                 await self.fetch_next_live_videos()  # Fetch next set of live videos
-                self.enqueue_videos(self.live_videos, self.top_videos)  # Re-enqueue videos with updated live streams
-            elif self.video_queue.empty() and self.next_popular_page_token != -1:
-                next_top_videos, self.next_popular_page_token = \
-                    await fetch_videos(order='viewCount',
-                                       max_results=POPULAR_VIDEOS_LIMIT,
-                                       page_token=self.next_popular_page_token,
-                                       bypass_cache=True)
-                for next_top_video in next_top_videos:
-                    self.video_queue.put((1, next_top_video))
+                self.enqueue_videos(self.live_videos, [])  # Enqueue only the live videos
+                self.prev_count = len(self.live_videos)  # Update the previous count
+
+            # Check if the video queue is empty and fetch more popular videos
+            if self.video_queue.empty() and self.next_popular_page_token and self.next_popular_page_token != -1:
+                self.top_videos, self.next_popular_page_token = await fetch_videos(
+                    order='viewCount',
+                    max_results=POPULAR_VIDEOS_LIMIT,
+                    page_token=self.next_popular_page_token,
+                    bypass_cache=True)
+                self.enqueue_videos([], self.top_videos)  # Enqueue only the top videos
             await asyncio.sleep(5)
 
     async def monitor_all_screens(self):
@@ -292,8 +313,6 @@ class MonitorManager:
 
 
 # -------- YOUTUBE API HANDLING -----------
-cache_manager = CacheManager(load_from_json())
-
 
 async def fetch_videos(event_type=None, order=None, max_results=None, page_token=None, bypass_cache=False):
     logger.debug_general(f"Fetching videos with event_type: {event_type}, order: {order}")

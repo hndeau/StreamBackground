@@ -6,9 +6,8 @@
     500,
     500
   ],
-  "API_KEY": "",
   "JSON_FILE": "video_cache.json",
-  "POPULAR_VIDEOS_LIMIT": 10,
+  "POPULAR_VIDEOS_LIMIT": 2,
   "LIVE_VIDEOS_LIMIT": 5,
   "WEB_DRIVER": "firefox"
 }
