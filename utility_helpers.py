@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import sys
 
 # Default config initialization
 DEFAULT_CONFIG = {
@@ -73,3 +74,11 @@ def load_from_json(filename=JSON_FILE):
     except json.JSONDecodeError:
         # Return an empty dictionary if there's a JSON decode error
         return {}
+
+
+def load_config():
+    with open("config.json", "r") as file:
+        c = json.load(file)
+
+    debug_mode = "--debug" in sys.argv or "-d" in sys.argv
+    return c, debug_mode

@@ -1,8 +1,9 @@
-import sys
 import threading
 import asyncio
+import sys
+from monitor_manager import MonitorManager
+from youtube_api import fetch_top_100_videos, fetch_live_videos
 
-from browser_handler import MonitorManager, fetch_top_100_videos, fetch_live_videos
 
 
 async def fetch_videos_and_initialize_manager():
@@ -11,7 +12,6 @@ async def fetch_videos_and_initialize_manager():
         fetch_top_100_videos()
     )
     return MonitorManager(live_videos, top_videos)
-
 
 if __name__ == "__main__":
     if sys.platform == 'win32':
