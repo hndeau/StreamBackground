@@ -4,15 +4,17 @@ import sys
 
 
 def setup_logging():
+    # Determine the logging level based on command-line arguments
     if "--debug-error" in sys.argv:
         logging_level = logging.ERROR
     elif "--debug-warning" in sys.argv:
         logging_level = logging.WARNING
     else:
-        logging_level = logging.INFO  # Default to WARNING if no flags are provided
+        logging_level = logging.INFO  # Default to INFO if no flags are provided
 
     # Create a logger object
     logger = logging.getLogger(__name__)
+    logger.setLevel(logging_level)  # Set the logging level for the logger object
 
     # Setup logging to console
     console_handler = logging.StreamHandler()
@@ -31,6 +33,7 @@ def setup_logging():
     logger.addHandler(file_handler)
 
     return logger
+
 
 
 # Global Logging Var
