@@ -74,7 +74,7 @@ async def fetch_videos(event_type=None, order=None, max_results=None, page_token
             json_data = json.loads(data)
             next_page_token = json_data.get('nextPageToken', -1)
             page_token = next_page_token
-            urls = ["https://www.youtube.com/embed/" + item['id']['videoId'] for item in json_data['items']]
+            urls = ["https://www.youtube.com/embed/" + item['id']['videoId'] + "?controls=0&autoplay=1" for item in json_data['items']]
 
     cache_manager.update_and_save_cache(urls, page_token, cache_key)
 

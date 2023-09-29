@@ -15,7 +15,6 @@ from selenium.webdriver.support import expected_conditions as ec
 from selenium.webdriver.support.ui import WebDriverWait
 from concurrent.futures import ThreadPoolExecutor
 
-
 from utility_helpers import config
 from youtube_api import cache_manager, fetch_live_videos, fetch_top_100_videos, BROWSER_WINDOW_SIZE, \
     fetch_videos, CHANNEL, POPULAR_VIDEOS_LIMIT, LIVE_VIDEOS_LIMIT
@@ -124,14 +123,15 @@ class MonitorManager:
         self.monitors = []
         self.STOP_THREADS = False
         self.video_queue = queue.PriorityQueue()
-        self.active_videos = set()  # Create a set of active videos
+        self.live_videos = set(live_video_cache["urls"]) if live_video_cache.get("urls") is not None else set()
+        self.active_videos = set()
 
         # If live_videos is not provided, fetch it from the cache or API
         if live_videos is None:
             if cache_manager.is_cache_valid('live'):
-                self.live_videos = live_video_cache.get('urls', [])
+                self.live_videos = set(live_video_cache.get('urls', []))
             else:
-                self.live_videos = asyncio.run(fetch_live_videos())
+                self.live_videos = set(asyncio.run(fetch_live_videos()))
 
         # If top_videos is not provided, fetch it from the cache or API
         if top_videos is None:
@@ -140,7 +140,7 @@ class MonitorManager:
             else:
                 self.top_videos = asyncio.run(fetch_top_100_videos())
 
-        self.enqueue_videos(live_videos, top_videos)
+        self.enqueue_videos(top_videos)
 
     def is_stopped(self):
         return self.STOP_THREADS
@@ -158,24 +158,37 @@ class MonitorManager:
             except Exception as e:
                 logger.error(f"Failed to close browser: {e}")
 
+    def is_video_active(self, video_url):
+        """Check if a video is currently active."""
+        return video_url in self.active_videos
+
     def play_video_in_monitor(self, monitor):
         while not self.is_stopped():
             if monitor.is_page_loaded():
                 if not monitor.is_playing_video():
-                    priority, video_url = self.video_queue.get() if not self.video_queue.empty() else (None, None)
-                    if priority is not None and video_url != monitor.current_url:
-                        self.active_videos.add(video_url)  # Add the video to active_videos
-                        monitor.play_video(video_url)
-                        if monitor.current_url:  # Remove the previously playing video from active_videos
-                            self.active_videos.discard(monitor.current_url)
-            time.sleep(5)
+                    unplayed_live_videos = self.get_unplayed_live_videos()
 
-    def enqueue_videos(self, live_videos, top_videos):
-        logger.info(f"Enqueuing {len(live_videos)} live videos and {len(top_videos)} top videos.")
+                    video_url = None
+                    if unplayed_live_videos:
+                        for url in unplayed_live_videos:
+                            if url not in self.active_videos:
+                                video_url = url
+                                break
+                    else:
+                        video_url = self.video_queue.get()
+                    if monitor.current_url is not None:
+                        self.active_videos.remove(monitor.current_url)
+                    self.active_videos.add(video_url)
+                    monitor.play_video(video_url)
+            time.sleep(10)
+
+    def enqueue_videos(self, top_videos):
+        """Enqueue only the top videos."""
+        logger.info(f"Enqueuing {len(top_videos)} top videos.")
         random.shuffle(top_videos)
-        for video, priority in zip(live_videos + top_videos, [0] * len(live_videos) + [1] * len(top_videos)):
+        for video in top_videos:
             if video not in self.active_videos:
-                self.video_queue.put((priority, video))
+                self.video_queue.put(video)
 
     def init_browser_and_return_monitor(self, monitor):
         """This method initializes the browser and returns the monitor instance."""
@@ -198,15 +211,13 @@ class MonitorManager:
     async def fetch_next_live_videos(self):
         # Check if the live video cache is valid
         if cache_manager.is_cache_valid('live'):
-            self.live_videos = cache_manager.load_from_cache('live').get('urls', [])
+            self.live_videos = set(cache_manager.load_from_cache('live').get('urls', []))
         else:
-            # Fetch from the API if cache is not valid
             self.live_videos, _ = await fetch_videos(event_type='live', max_results=LIVE_VIDEOS_LIMIT, page_token=None)
 
         for next_live_video in self.live_videos:
             self.video_queue.put((0, next_live_video))
 
-        # Update this line to get the 'live' video count from the cache
         self.prev_count = len(cache_manager.load_from_cache('live').get('urls', []))
 
     async def fetch_and_enqueue_next_videos(self):
@@ -216,7 +227,6 @@ class MonitorManager:
                                                                       self.driver_name)
             if result > self.prev_count:
                 await self.fetch_next_live_videos()  # Fetch next set of live videos
-                self.enqueue_videos(self.live_videos, [])  # Enqueue only the live videos
                 self.prev_count = len(self.live_videos)  # Update the previous count
 
             # Check if the video queue is empty and fetch more popular videos
@@ -226,8 +236,12 @@ class MonitorManager:
                     max_results=POPULAR_VIDEOS_LIMIT,
                     page_token=self.next_popular_page_token,
                     bypass_cache=True)
-                self.enqueue_videos([], self.top_videos)  # Enqueue only the top videos
+                self.enqueue_videos(self.top_videos)  # Enqueue only the top videos
             await asyncio.sleep(5)
+
+    def get_unplayed_live_videos(self):
+        """Returns a list of live videos that are not currently being played."""
+        return list(self.live_videos - self.active_videos)
 
     async def monitor_all_screens(self):
         detected_monitors = get_monitors()
@@ -239,7 +253,7 @@ class MonitorManager:
         for t in monitor_threads:
             t.start()
 
-        await self.fetch_and_enqueue_next_videos()  # Simply await the coroutine
+        await self.fetch_and_enqueue_next_videos()
 
         for t in monitor_threads:
             t.join()
